@@ -14,7 +14,7 @@ subscription state.
 
 - Neovim `>= 0.10`
 - `lazyaz` available on `PATH`
-- Azure CLI `az` is recommended because lazyaz depends on Azure auth
+- Azure CLI `az`
 
 ## Installation
 
