@@ -2,8 +2,8 @@ local M = {}
 
 local specs = {
   "tests.config_spec",
-  "tests.overlay_spec",
   "tests.terminal_spec",
+  "tests.tmux_spec",
   "tests.api_spec",
   "tests.commands_spec",
   "tests.health_spec",
@@ -22,12 +22,10 @@ end
 
 local function cleanup()
   local terminal = package.loaded["lazyaz.terminal"]
-  if terminal then
-    for _, instance in pairs(terminal.instances) do
-      pcall(function()
-        instance:close()
-      end)
-    end
+  if terminal and terminal.instance then
+    pcall(function()
+      terminal.instance:close()
+    end)
   end
   pcall(vim.cmd, "%bwipeout!")
   for _, win in ipairs(vim.api.nvim_list_wins()) do

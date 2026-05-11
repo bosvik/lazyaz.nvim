@@ -1,7 +1,12 @@
 local M = {}
 
 local defaults = {
-  download_dir = nil,
+  mux = {
+    enabled = false,
+  },
+  keys = {
+    hide = "<c-x>",
+  },
   window = {
     width = 0.9,
     height = 0.9,
@@ -18,17 +23,6 @@ local current = vim.deepcopy(defaults)
 
 local function notify(msg, level)
   vim.notify("lazyaz.nvim: " .. msg, level or vim.log.levels.WARN)
-end
-
-local function validate_download_dir(value)
-  if value == nil or type(value) == "function" then
-    return value
-  end
-  if type(value) == "string" and value ~= "" then
-    return value
-  end
-  notify("invalid download_dir; using default")
-  return defaults.download_dir
 end
 
 local function validate_window(window)
@@ -58,6 +52,24 @@ local function validate_window(window)
   return merged
 end
 
+local function validate_mux(mux)
+  local merged = vim.tbl_deep_extend("force", defaults.mux, type(mux) == "table" and mux or {})
+  if type(merged.enabled) ~= "boolean" then
+    notify("invalid mux.enabled; using default")
+    merged.enabled = defaults.mux.enabled
+  end
+  return merged
+end
+
+local function validate_keys(keys)
+  local merged = vim.tbl_deep_extend("force", defaults.keys, type(keys) == "table" and keys or {})
+  if merged.hide ~= false and (type(merged.hide) ~= "string" or merged.hide == "") then
+    notify("invalid keys.hide; using default")
+    merged.hide = defaults.keys.hide
+  end
+  return merged
+end
+
 local function validate_callback(opts, name)
   if opts[name] == nil then
     return defaults[name]
@@ -77,7 +89,8 @@ function M.setup(opts)
   end
 
   local merged = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts)
-  merged.download_dir = validate_download_dir(merged.download_dir)
+  merged.mux = validate_mux(merged.mux)
+  merged.keys = validate_keys(merged.keys)
   merged.window = validate_window(merged.window)
   merged.on_open = validate_callback(merged, "on_open")
   merged.on_hide = validate_callback(merged, "on_hide")
@@ -96,17 +109,6 @@ function M.real_config_dir()
     return vim.fs.joinpath(xdg, "lazyaz")
   end
   return vim.fs.joinpath(vim.fn.expand("~"), ".config", "lazyaz")
-end
-
-function M.normalize_scope(scope)
-  if scope == nil or scope == "" or scope == "global" then
-    return "global"
-  end
-  if scope == "root" then
-    return "root"
-  end
-  notify("invalid scope " .. vim.inspect(scope), vim.log.levels.ERROR)
-  return nil
 end
 
 function M._test_reset()

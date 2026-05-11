@@ -1,9 +1,6 @@
 local config = require("lazyaz.config")
-local overlay = require("lazyaz.overlay")
 
-local M = { instances = {} }
-
-local GLOBAL_ID = "__global__"
+local M = {}
 
 local function notify(msg, level)
   vim.notify("lazyaz.nvim: " .. msg, level or vim.log.levels.WARN)
@@ -18,15 +15,15 @@ local function safe_call(name, ...)
 end
 
 local function valid_win(win)
-  return win and vim.api.nvim_win_is_valid(win)
+  return win ~= nil and vim.api.nvim_win_is_valid(win)
 end
 
 local function valid_buf(buf)
-  return buf and vim.api.nvim_buf_is_valid(buf)
+  return buf ~= nil and vim.api.nvim_buf_is_valid(buf)
 end
 
 local function is_running(job)
-  return job and vim.fn.jobwait({ job }, 0)[1] == -1
+  return job ~= nil and vim.fn.jobwait({ job }, 0)[1] == -1
 end
 
 local function geometry()
@@ -66,25 +63,6 @@ local function setup_highlights()
   vim.api.nvim_set_hl(0, "LazyazBorder", { link = "FloatBorder", default = true })
 end
 
-local function root_dir()
-  local ok, root = pcall(vim.fs.root, 0, ".git")
-  if ok and root then
-    return vim.fs.normalize(root)
-  end
-  return vim.fs.normalize(vim.fn.getcwd())
-end
-
-function M.root_dir()
-  return root_dir()
-end
-
-local function id_for(scope, root)
-  if scope == "global" then
-    return GLOBAL_ID
-  end
-  return vim.fn.sha256(vim.fs.normalize(root)):sub(1, 16)
-end
-
 local Terminal = {}
 Terminal.__index = Terminal
 
@@ -98,26 +76,18 @@ local function ensure_leave_autocmd()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("lazyaz.nvim.leave", { clear = true }),
     callback = function()
-      for _, instance in pairs(M.instances) do
-        if instance:running() then
-          pcall(vim.fn.jobstop, instance.job)
-        end
+      if M.instance and M.instance:running() then
+        pcall(vim.fn.jobstop, M.instance.job)
       end
     end,
   })
 end
 
-function Terminal.new(scope)
+function Terminal.new()
   ensure_leave_autocmd()
-  local cwd = scope == "root" and root_dir() or vim.fn.getcwd()
-  local root = scope == "root" and cwd or nil
-  local id = id_for(scope, cwd)
   local self = setmetatable({
-    id = id,
-    scope = scope,
-    cwd = cwd,
-    root = root,
-    group = vim.api.nvim_create_augroup("lazyaz.nvim." .. id, { clear = true }),
+    cwd = vim.fn.getcwd(),
+    group = vim.api.nvim_create_augroup("lazyaz.nvim.terminal", { clear = true }),
     gen = 0,
     normal_mode = false,
     close_requested = false,
@@ -125,12 +95,36 @@ function Terminal.new(scope)
     finalised = false,
     exit_reported = false,
   }, Terminal)
-  M.instances[id] = self
+  M.instance = self
   return self
 end
 
 function Terminal:running()
   return is_running(self.job)
+end
+
+function Terminal:setup_keymaps()
+  local hide = config.get().keys.hide
+  if self.hide_keymap then
+    for _, mode in ipairs({ "n", "t" }) do
+      pcall(vim.keymap.del, mode, self.hide_keymap, { buffer = self.buf })
+    end
+    self.hide_keymap = nil
+  end
+  if hide == false then
+    return
+  end
+  vim.b[self.buf].lazyaz = true
+  vim.keymap.set("n", hide, function()
+    self:hide()
+  end, { buffer = self.buf, desc = "Hide lazyaz", nowait = true, silent = true })
+  vim.keymap.set("t", hide, [[<C-\><C-n><Cmd>lua require("lazyaz.terminal").hide_current()<CR>]], {
+    buffer = self.buf,
+    desc = "Hide lazyaz",
+    nowait = true,
+    silent = true,
+  })
+  self.hide_keymap = hide
 end
 
 function Terminal:open_window()
@@ -139,12 +133,12 @@ function Terminal:open_window()
     self.buf = vim.api.nvim_create_buf(false, true)
     vim.bo[self.buf].bufhidden = "hide"
   end
+  self:setup_keymaps()
   if valid_win(self.win) then
     vim.api.nvim_set_current_win(self.win)
     self:restore_mode()
     return true
   end
-  self:hide_others()
   self.suppress_on_hide = true
   self.win = vim.api.nvim_open_win(self.buf, true, geometry())
   self.suppress_on_hide = false
@@ -152,14 +146,6 @@ function Terminal:open_window()
   safe_call("on_open")
   self:restore_mode()
   return true
-end
-
-function Terminal:hide_others()
-  for id, instance in pairs(M.instances) do
-    if id ~= self.id and valid_win(instance.win) then
-      instance:hide()
-    end
-  end
 end
 
 function Terminal:setup_autocmds()
@@ -231,20 +217,22 @@ function Terminal:start()
   self.opened_at = vim.uv.hrtime()
   self:open_window()
   self:setup_autocmds()
-  local env = nil
-  if self.scope == "root" then
-    local xdg = overlay.build(self.root, config.get().download_dir)
-    if xdg then
-      self.overlay = xdg
-      env = { XDG_CONFIG_HOME = xdg }
-    end
-  end
   if not valid_win(self.win) or vim.api.nvim_win_get_buf(self.win) ~= self.buf then
     notify("terminal window disappeared before startup", vim.log.levels.ERROR)
     self:finalise(nil, self.gen)
     return false
   end
-  local ok, job = pcall(vim.fn.jobstart, { "lazyaz" }, { term = true, cwd = self.cwd, env = env })
+  local cmd = { "lazyaz" }
+  if config.get().mux.enabled then
+    local tmux = require("lazyaz.tmux")
+    if not tmux.executable() then
+      notify("tmux is required when mux.enabled is true", vim.log.levels.ERROR)
+      self:finalise(nil, self.gen)
+      return false
+    end
+    cmd = tmux.command(self.cwd)
+  end
+  local ok, job = pcall(vim.fn.jobstart, cmd, { term = true, cwd = self.cwd })
   if not ok or job == 0 or job == -1 then
     notify("failed to start lazyaz", vim.log.levels.ERROR)
     self:finalise(nil, self.gen)
@@ -295,7 +283,9 @@ function Terminal:finalise(_, gen)
   end
   self.buf = nil
   pcall(vim.api.nvim_del_augroup_by_id, self.group)
-  M.instances[self.id] = nil
+  if M.instance == self then
+    M.instance = nil
+  end
 end
 
 function Terminal:open()
@@ -304,11 +294,11 @@ function Terminal:open()
   end
   if self.job and not self:running() then
     self:finalise(self.last_exit_code, self.gen)
-    return Terminal.new(self.scope):start()
+    return Terminal.new():start()
   end
   if self.last_exit_code ~= nil and not self:running() then
     self:finalise(self.last_exit_code, self.gen)
-    return Terminal.new(self.scope):start()
+    return Terminal.new():start()
   end
   if self:running() then
     self:open_window()
@@ -317,12 +307,16 @@ function Terminal:open()
   return self:start()
 end
 
-function Terminal:focus()
-  return self:open()
+function Terminal:blur()
+  if valid_win(self.win) and vim.api.nvim_get_current_win() == self.win then
+    pcall(vim.cmd.wincmd, "p")
+  end
+  vim.cmd.stopinsert()
 end
 
 function Terminal:hide()
   if valid_win(self.win) then
+    self:blur()
     pcall(vim.api.nvim_win_close, self.win, true)
   end
 end
@@ -332,7 +326,7 @@ function Terminal:close()
   if self:running() then
     pcall(vim.fn.jobstop, self.job)
     vim.defer_fn(function()
-      if M.instances[self.id] == self and self.close_requested and self.job and not self.exit_reported then
+      if M.instance == self and self.close_requested and self.job and not self.exit_reported then
         local result = vim.fn.jobwait({ self.job }, 0)[1]
         if result ~= -1 then
           self:on_term_close(result)
@@ -344,27 +338,12 @@ function Terminal:close()
   self:finalise(self.last_exit_code, self.gen)
 end
 
-local function get(scope, create)
-  if scope == "global" then
-    return M.instances[GLOBAL_ID] or (create and Terminal.new(scope) or nil)
-  end
-  local root = root_dir()
-  local id = id_for(scope, root)
-  return M.instances[id] or (create and Terminal.new(scope) or nil)
+local function get(create)
+  return M.instance or (create and Terminal.new() or nil)
 end
 
-function M.open(scope)
-  local instance = get(scope, true)
-  return instance and instance:open()
-end
-
-function M.focus(scope)
-  local instance = get(scope, true)
-  return instance and instance:focus()
-end
-
-function M.toggle(scope)
-  local instance = get(scope, true)
+function M.toggle()
+  local instance = get(true)
   if not instance then
     return
   end
@@ -375,30 +354,25 @@ function M.toggle(scope)
   return instance:open()
 end
 
-function M.hide(scope)
-  local instance = get(scope, false)
+function M.hide_current()
+  local instance = M.instance
   if instance then
     instance:hide()
+    return true
   end
+  return false
 end
 
-function M.close(scope)
-  local instance = get(scope, false)
-  if instance then
-    instance:close()
-  end
-end
-
-function M.is_open(scope)
-  local instance = get(scope, false)
+function M.is_open()
+  local instance = get(false)
   return instance ~= nil and valid_win(instance.win)
 end
 
-function M.is_running(scope)
-  local instance = get(scope, false)
+function M.is_running()
+  local instance = get(false)
   return instance ~= nil and instance:running()
 end
 
-M._test = { Terminal = Terminal, root_dir = root_dir, geometry = geometry }
+M._test = { Terminal = Terminal, geometry = geometry }
 
 return M

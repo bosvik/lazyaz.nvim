@@ -7,6 +7,8 @@ return {
       vim.cmd.runtime("plugin/lazyaz.lua")
       t.ok(vim.fn.exists(":LazyazToggle") == 2)
       t.ok(vim.fn.exists(":LazyazConfig") == 2)
+      t.eq(0, vim.fn.exists(":LazyazOpen"))
+      t.eq(0, vim.fn.exists(":LazyazSelect"))
     end,
   },
 }

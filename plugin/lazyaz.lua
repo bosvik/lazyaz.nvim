@@ -8,24 +8,10 @@ if vim.fn.has("nvim-0.10") ~= 1 then
   return
 end
 
-local function complete(arglead)
-  return vim.tbl_filter(function(item)
-    return item:sub(1, #arglead) == arglead
-  end, { "global", "root" })
-end
+vim.api.nvim_create_user_command("LazyazToggle", function()
+  require("lazyaz").toggle()
+end, {})
 
-local function command(name, method)
-  vim.api.nvim_create_user_command(name, function(opts)
-    require("lazyaz")[method](opts.args)
-  end, { nargs = "?", complete = complete })
-end
-
-command("LazyazToggle", "toggle")
-command("LazyazOpen", "open")
-command("LazyazHide", "hide")
-command("LazyazFocus", "focus")
-command("LazyazClose", "close")
-
-vim.api.nvim_create_user_command("LazyazConfig", function(opts)
-  require("lazyaz").config_edit(opts.args)
-end, { nargs = "?", complete = complete })
+vim.api.nvim_create_user_command("LazyazConfig", function()
+  require("lazyaz").config_edit()
+end, {})

@@ -1,20 +1,20 @@
 return {
   {
-    name = "defaults and scopes",
+    name = "defaults",
     fn = function(t)
       local config = require("lazyaz.config")
       config.setup()
-      t.eq(nil, config.get().download_dir)
-      t.eq("global", config.normalize_scope(nil))
-      t.eq("root", config.normalize_scope("root"))
+      t.eq(false, config.get().mux.enabled)
+      t.eq("<c-x>", config.get().keys.hide)
     end,
   },
   {
     name = "valid overrides",
     fn = function(t)
       local config = require("lazyaz.config")
-      config.setup({ download_dir = "downloads", window = { width = 80, title = "x" } })
-      t.eq("downloads", config.get().download_dir)
+      config.setup({ mux = { enabled = true }, keys = { hide = false }, window = { width = 80, title = "x" } })
+      t.eq(true, config.get().mux.enabled)
+      t.eq(false, config.get().keys.hide)
       t.eq(80, config.get().window.width)
       t.eq("x", config.get().window.title)
     end,
@@ -24,11 +24,12 @@ return {
     fn = function(t)
       local config = require("lazyaz.config")
       local notifications = t.with_notify(function()
-        config.setup({ download_dir = "", window = { width = -1 }, on_open = true })
+        config.setup({ window = { width = -1 }, on_open = true, mux = { enabled = "yes" }, keys = { hide = true } })
       end)
-      t.ok(#notifications >= 3)
-      t.eq(nil, config.get().download_dir)
+      t.ok(#notifications >= 4)
       t.eq(0.9, config.get().window.width)
+      t.eq(false, config.get().mux.enabled)
+      t.eq("<c-x>", config.get().keys.hide)
     end,
   },
   {

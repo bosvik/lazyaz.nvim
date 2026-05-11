@@ -33,6 +33,18 @@ function M.check()
     h.warn("Azure CLI not found")
   end
 
+  if vim.fn.executable("tmux") == 1 then
+    if config.get().mux.enabled then
+      h.ok("tmux found")
+    else
+      h.info("tmux found; enable opts.mux.enabled to persist sessions")
+    end
+  elseif config.get().mux.enabled then
+    h.error("tmux not found. Install tmux or disable opts.mux.enabled")
+  else
+    h.info("tmux not found; only needed when opts.mux.enabled is true")
+  end
+
   local dir = config.real_config_dir()
   local stat = vim.uv.fs_stat(dir)
   if not stat then
